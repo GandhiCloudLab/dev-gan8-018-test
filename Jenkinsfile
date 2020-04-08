@@ -96,6 +96,18 @@ spec:
             secretKeyRef:
               name: ${secretName}
               key: password
+    - name: trivy
+      image: docker.io/aquasec/trivy
+      tty: true
+      command: ["/bin/sh"]
+      workingDir: ${workingDir}
+      env:
+        - name: HOME
+          value: /home/devops
+        - name: ENVIRONMENT_NAME
+          value: ${namespace}
+        - name: BUILD_NUMBER
+          value: ${env.BUILD_NUMBER}      
     - name: ibmcloud
       image: docker.io/garagecatalyst/ibmcloud-dev:1.0.8
       tty: true
@@ -140,6 +152,30 @@ spec:
 """
 ) {
     node(buildLabel) {
+        container(name: 'trivy', shell: '/bin/sh') {
+          stage('Scan Image Demo') {
+                 sh '''#!/bin/sh
+
+                    echo "ScanImage Before Trivy image scanning....0"
+
+                    trivy --exit-code 1 --severity CRITICAL python:3.4-alpine
+                    my_exit_code=$?
+                    echo "RESULT 1:--- $my_exit_code"
+
+                    # Check scan results
+                    if [ ${my_exit_code} == 1 ]; then
+                        echo "Image scanning failed. Some vulnerabilities found"
+                        exit 1;
+                    else
+                        echo "Image is scanned Successfully. No vulnerabilities found"
+                    fi;
+
+                    # docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy python:3.4-alpine
+
+                    echo "ScanImage After Trivy image scanning....0"
+                '''
+            }
+        }
         container(name: 'jdk11', shell: '/bin/bash') {
             checkout scm
             stage('Build') {
@@ -215,6 +251,51 @@ spec:
                     ibmcloud cr build -t ${REGISTRY_URL}/${REGISTRY_NAMESPACE}/${IMAGE_NAME}:${IMAGE_VERSION} .
                 '''
             }
+        }
+        container(name: 'trivy', shell: '/bin/sh') {
+            stage('Scan image using trivy') {
+
+                  sh '''#!/bin/sh
+
+                    set -e
+                    . ./env-config
+
+                    echo "ScanImage Before Trivy image scanning....0"
+
+                    ibmcloud cr build -t  .
+
+                    trivy --exit-code 1 --severity CRITICAL python:3.4-alpine
+                    my_exit_code=$?
+                    echo "RESULT 0:--- $my_exit_code"
+
+                    # Test scanning ..... Check scan results
+                    if [ ${my_exit_code} == 1 ]; then
+                        echo "Image1 scanning failed. Some vulnerabilities found"
+                    else
+                        echo "Image1 is scanned Successfully. No vulnerabilities found"
+                    fi;
+
+                    APP_IMAGE="${REGISTRY_URL}/${REGISTRY_NAMESPACE}/${IMAGE_NAME}:${IMAGE_VERSION}"
+                    echo "ScanImage Before Trivy image scanning.... $APP_IMAGE"
+
+                    # Real scanning ..... Check scan results
+                    trivy --exit-code 1 --severity HIGH,CRITICAL ${APP_IMAGE}
+                    my_exit_code=$?
+                    echo "RESULT 1:--- $my_exit_code"
+
+                    # Check scan results
+                    if [ ${my_exit_code} == 1 ]; then
+                        echo "Image scanning failed. Some vulnerabilities found"
+                        exit 1;
+                    else
+                        echo "Image is scanned Successfully. No vulnerabilities found"
+                    fi;
+
+                    echo "ScanImage After Trivy image scanning....0"
+                '''
+            }
+        }
+         container(name: 'ibmcloud', shell: '/bin/bash') {
             stage('Deploy to DEV env') {
                 sh '''#!/bin/bash
                     . ./env-config
